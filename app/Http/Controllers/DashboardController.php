@@ -4,7 +4,6 @@ namespace App\Http\Controllers;
 
 use App\Services\JiraService;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Http\Request;
 use GuzzleHttp\Client;
 
@@ -28,6 +27,7 @@ class DashboardController extends Controller
     {
         $user = Auth::user();
         $email = $user->jira_email;
+
         $client = new Client([
             'base_uri' => $this->baseUrl,
             'auth' => [$email, $this->token],
@@ -35,10 +35,25 @@ class DashboardController extends Controller
                 'Accept' => 'application/json',
             ],
         ]);
+
         try {
+            // Step 1: Get Task Details
             $response = $client->request('GET', "/rest/api/3/issue/{$id}");
             $task = json_decode($response->getBody(), true);
-            return view('Tasks.edit', compact('task'));
+
+            // Step 2: Get Status Transitions
+            $transitionResponse = $client->request('GET', "/rest/api/3/issue/{$id}/transitions");
+            $transitions = json_decode($transitionResponse->getBody(), true);
+
+            // Format transitions as a list of statuses
+            $statuses = collect($transitions['transitions'])->map(function ($transition) {
+                return [
+                    'id' => $transition['id'],
+                    'name' => $transition['to']['name'],
+                ];
+            })->all();
+
+            return view('Tasks.edit', compact('task', 'statuses'));
         } catch (\GuzzleHttp\Exception\ClientException $e) {
             return redirect()->back()->with('error', 'Jira error: ' . $e->getMessage());
         } catch (\Exception $e) {
@@ -51,11 +66,11 @@ class DashboardController extends Controller
         $email = $user->jira_email;
         $token = $this->token;
 
-        // Validate input (optional, adjust rules as needed)
         $request->validate([
             'summary' => 'required|string',
             'description' => 'required|string',
             'comment' => 'nullable|string',
+            'status' => 'nullable|string', // transition ID
         ]);
 
         $client = new Client([
@@ -90,6 +105,19 @@ class DashboardController extends Controller
                 'json' => $updateFields,
             ]);
 
+            // Update status using transitions API
+            if ($request->filled('status')) {
+                $transitionData = [
+                    'transition' => [
+                        'id' => $request->status,
+                    ],
+                ];
+
+                $client->request('POST', "/rest/api/3/issue/{$id}/transitions", [
+                    'json' => $transitionData,
+                ]);
+            }
+
             // Add comment if provided
             if ($request->filled('comment')) {
                 $commentBody = [
@@ -111,11 +139,11 @@ class DashboardController extends Controller
                 ]);
             }
 
-            return response()->json(['success' => true, 'message' => 'Issue updated successfully.']);
+            return redirect()->route('dashboard')->with('success', 'Issue updated successfully.');
         } catch (\GuzzleHttp\Exception\ClientException $e) {
-            return response()->json(['error' => 'Jira update failed', 'details' => $e->getMessage()], 400);
+            return redirect()->back()->with('error', 'Jira update failed: ' . $e->getMessage());
         } catch (\Exception $e) {
-            return response()->json(['error' => 'Unexpected error', 'details' => $e->getMessage()], 500);
+            return redirect()->back()->with('error', 'Unexpected error: ' . $e->getMessage());
         }
     }
 }

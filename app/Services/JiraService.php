@@ -34,16 +34,16 @@ class JiraService
             $response = $client->request('GET', '/rest/api/3/search', [
                 'query' => [
                     'jql' => 'assignee=currentUser()',
+                    'fields' => 'summary,status,priority,project,sprint',
                 ],
             ]);
 
             $data = json_decode($response->getBody(), true);
 
             $tasks = collect($data['issues'])->sortBy([
-                ['fields.priority.name', 'desc'],   // High > Low
-                ['fields.project.name', 'asc'],     // A-Z
+                ['fields.priority.name', 'desc'],
+                ['fields.project.name', 'asc'],
             ])->values()->all();
-
             return $tasks;
         } catch (\GuzzleHttp\Exception\ClientException $e) {
             return response()->json([
